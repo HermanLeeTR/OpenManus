@@ -94,26 +94,47 @@ Outputs:
     async def data_visualization(
         self, json_info: list[dict[str, str]], output_type: str, language: str
     ) -> str:
-        data_list = []
-        csv_file_path = self.get_file_path(json_info, "csvFilePath")
-        for index, item in enumerate(json_info):
-            df = pd.read_csv(csv_file_path[index], encoding="utf-8")
-            df = df.astype(object)
-            df = df.where(pd.notnull(df), None)
-            data_dict_list = df.to_json(orient="records", force_ascii=False)
+        logger.debug(f"Received JSON data: {json_info}")
+        if not json_info or not isinstance(json_info, list):
+            return {
+                "observation": "Error: Invalid JSON format. Expected a list of objects with 'csvFilePath' and 'chartTitle' fields.",
+                "success": False,
+            }
 
-            data_list.append(
-                {
-                    "file_name": os.path.basename(csv_file_path[index]).replace(
-                        ".csv", ""
-                    ),
-                    "dict_data": data_dict_list,
-                    "chartTitle": item["chartTitle"],
-                }
-            )
+        data_list = []
+        try:
+            csv_file_path = self.get_file_path(json_info, "csvFilePath")
+            for index, item in enumerate(json_info):
+                if "chartTitle" not in item:
+                    raise ValueError(f"Missing 'chartTitle' in item {index}")
+
+                df = pd.read_csv(csv_file_path[index], encoding="utf-8")
+                df = df.astype(object)
+                df = df.where(pd.notnull(df), None)
+
+                data_list.append(
+                    {
+                        "file_name": os.path.basename(csv_file_path[index]).replace(
+                            ".csv", ""
+                        ),
+                        "data": df.to_dict(orient="records"),
+                        "chartTitle": item["chartTitle"],
+                    }
+                )
+        except KeyError as e:
+            return {
+                "observation": f"Error: Missing required field in JSON: {str(e)}",
+                "success": False,
+            }
+        except Exception as e:
+            return {
+                "observation": f"Error processing data: {str(e)}",
+                "success": False,
+            }
+
         tasks = [
             self.invoke_vmind(
-                dict_data=item["dict_data"],
+                data=item["data"],
                 chart_description=item["chartTitle"],
                 file_name=item["file_name"],
                 output_type=output_type,
@@ -139,7 +160,7 @@ Outputs:
                 )
         if len(error_list) > 0:
             return {
-                "observation": f"# Error chart generated{'\n'.join(error_list)}\n{self.success_output_template(success_list)}",
+                "observation": f"# Error chart generated{chr(10).join(error_list)}\n{self.success_output_template(success_list)}",
                 "success": False,
             }
         else:
@@ -187,7 +208,7 @@ Outputs:
         )
         if len(error_list) > 0:
             return {
-                "observation": f"# Error in chart insights:{'\n'.join(error_list)}\n{success_template}",
+                "observation": f"# Error in chart insights:{chr(10).join(error_list)}\n{success_template}",
                 "success": False,
             }
         else:
@@ -220,7 +241,7 @@ Outputs:
         output_type: str,
         task_type: str,
         insights_id: list[str] = None,
-        dict_data: list[dict[Hashable, Any]] = None,
+        data: list[dict] = None,
         chart_description: str = None,
         language: str = "en",
     ):
@@ -232,7 +253,7 @@ Outputs:
         vmind_params = {
             "llm_config": llm_config,
             "user_prompt": chart_description,
-            "dataset": dict_data,
+            "dataset": data,
             "file_name": file_name,
             "output_type": output_type,
             "insights_id": insights_id,

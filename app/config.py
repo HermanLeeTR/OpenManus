@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
+from app.logger import logger
+from app.constants import PROJECT_ROOT, WORKSPACE_ROOT
 
 
 def get_project_root() -> Path:
@@ -57,12 +59,6 @@ class SearchSettings(BaseModel):
     country: str = Field(
         default="us",
         description="Country code for search results (e.g., us, cn, uk)",
-    )
-
-
-class RunflowSettings(BaseModel):
-    use_data_analysis_agent: bool = Field(
-        default=False, description="Enable data analysis agent in run flow"
     )
 
 
@@ -152,6 +148,17 @@ class MCPSettings(BaseModel):
             raise ValueError(f"Failed to load MCP server config: {e}")
 
 
+class SnowflakeSettings(BaseModel):
+    """Configuration for Snowflake database connection"""
+
+    user: str = Field(..., description="Snowflake username")
+    password: str = Field(..., description="Snowflake password")
+    account: str = Field(..., description="Snowflake account identifier")
+    warehouse: str = Field(..., description="Snowflake warehouse name")
+    database: str = Field(..., description="Snowflake database name")
+    schema: str = Field(..., description="Snowflake schema name")
+
+
 class AppConfig(BaseModel):
     llm: Dict[str, LLMSettings]
     sandbox: Optional[SandboxSettings] = Field(
@@ -164,8 +171,8 @@ class AppConfig(BaseModel):
         None, description="Search configuration"
     )
     mcp_config: Optional[MCPSettings] = Field(None, description="MCP configuration")
-    run_flow_config: Optional[RunflowSettings] = Field(
-        None, description="Run flow configuration"
+    snowflake_config: Optional[Dict[str, SnowflakeSettings]] = Field(
+        None, description="Snowflake configurations for different agents"
     )
 
     class Config:
@@ -209,93 +216,62 @@ class Config:
             return tomllib.load(f)
 
     def _load_initial_config(self):
+        """Load initial configuration from file."""
         raw_config = self._load_config()
-        base_llm = raw_config.get("llm", {})
-        llm_overrides = {
-            k: v for k, v in raw_config.get("llm", {}).items() if isinstance(v, dict)
-        }
 
-        default_settings = {
-            "model": base_llm.get("model"),
-            "base_url": base_llm.get("base_url"),
-            "api_key": base_llm.get("api_key"),
-            "max_tokens": base_llm.get("max_tokens", 4096),
-            "max_input_tokens": base_llm.get("max_input_tokens"),
-            "temperature": base_llm.get("temperature", 1.0),
-            "api_type": base_llm.get("api_type", ""),
-            "api_version": base_llm.get("api_version", ""),
-        }
-
-        # handle browser config.
-        browser_config = raw_config.get("browser", {})
-        browser_settings = None
-
-        if browser_config:
-            # handle proxy settings.
-            proxy_config = browser_config.get("proxy", {})
-            proxy_settings = None
-
-            if proxy_config and proxy_config.get("server"):
-                proxy_settings = ProxySettings(
-                    **{
-                        k: v
-                        for k, v in proxy_config.items()
-                        if k in ["server", "username", "password"] and v
-                    }
+        # Load LLM settings
+        llm_settings = {}
+        for key, settings in raw_config.get("llm", {}).items():
+            if isinstance(settings, dict):
+                llm_settings[key] = LLMSettings(**settings)
+            else:
+                logger.warning(
+                    f"Skipping invalid LLM settings for {key}: expected dict, got {type(settings)}"
                 )
 
-            # filter valid browser config parameters.
-            valid_browser_params = {
-                k: v
-                for k, v in browser_config.items()
-                if k in BrowserSettings.__annotations__ and v is not None
-            }
+        # Load sandbox settings
+        sandbox_settings = None
+        if "sandbox" in raw_config and isinstance(raw_config["sandbox"], dict):
+            sandbox_settings = SandboxSettings(**raw_config["sandbox"])
 
-            # if there is proxy settings, add it to the parameters.
-            if proxy_settings:
-                valid_browser_params["proxy"] = proxy_settings
+        # Load browser settings
+        browser_settings = None
+        if "browser" in raw_config and isinstance(raw_config["browser"], dict):
+            browser_settings = BrowserSettings(**raw_config["browser"])
 
-            # only create BrowserSettings when there are valid parameters.
-            if valid_browser_params:
-                browser_settings = BrowserSettings(**valid_browser_params)
-
-        search_config = raw_config.get("search", {})
+        # Load search settings
         search_settings = None
-        if search_config:
-            search_settings = SearchSettings(**search_config)
-        sandbox_config = raw_config.get("sandbox", {})
-        if sandbox_config:
-            sandbox_settings = SandboxSettings(**sandbox_config)
-        else:
-            sandbox_settings = SandboxSettings()
+        if "search" in raw_config and isinstance(raw_config["search"], dict):
+            search_settings = SearchSettings(**raw_config["search"])
 
-        mcp_config = raw_config.get("mcp", {})
-        mcp_settings = None
-        if mcp_config:
-            # Load server configurations from JSON
-            mcp_config["servers"] = MCPSettings.load_server_config()
-            mcp_settings = MCPSettings(**mcp_config)
-        else:
-            mcp_settings = MCPSettings(servers=MCPSettings.load_server_config())
+        # Load MCP settings
+        mcp_settings = MCPSettings(servers=MCPSettings.load_server_config())
 
-        run_flow_config = raw_config.get("runflow")
-        if run_flow_config:
-            run_flow_settings = RunflowSettings(**run_flow_config)
-        else:
-            run_flow_settings = RunflowSettings()
+        # Load Snowflake settings
+        snowflake_settings = {}
+        if "snowflake" in raw_config:
+            if isinstance(raw_config["snowflake"], dict):
+                # Handle both old and new format
+                if any(key in raw_config["snowflake"] for key in ["org", "person"]):
+                    # New format with multiple configurations
+                    for agent_type, settings in raw_config["snowflake"].items():
+                        if isinstance(settings, dict):
+                            snowflake_settings[agent_type] = SnowflakeSettings(
+                                **settings
+                            )
+                else:
+                    # Old format - single configuration
+                    snowflake_settings["default"] = SnowflakeSettings(
+                        **raw_config["snowflake"]
+                    )
+
         config_dict = {
-            "llm": {
-                "default": default_settings,
-                **{
-                    name: {**default_settings, **override_config}
-                    for name, override_config in llm_overrides.items()
-                },
-            },
+            "llm": llm_settings,
             "sandbox": sandbox_settings,
             "browser_config": browser_settings,
             "search_config": search_settings,
             "mcp_config": mcp_settings,
-            "run_flow_config": run_flow_settings,
+            "snowflake_config": snowflake_settings,
         }
 
         self._config = AppConfig(**config_dict)
@@ -322,9 +298,9 @@ class Config:
         return self._config.mcp_config
 
     @property
-    def run_flow_config(self) -> RunflowSettings:
-        """Get the Run Flow configuration"""
-        return self._config.run_flow_config
+    def snowflake_config(self) -> Optional[Dict[str, SnowflakeSettings]]:
+        """Get Snowflake configurations"""
+        return self._config.snowflake_config
 
     @property
     def workspace_root(self) -> Path:

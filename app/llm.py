@@ -215,7 +215,7 @@ class LLM:
 
             if self.api_type == "azure":
                 self.client = AsyncAzureOpenAI(
-                    base_url=self.base_url,
+                    azure_endpoint=self.base_url,
                     api_key=self.api_key,
                     api_version=self.api_version,
                 )
@@ -394,6 +394,7 @@ class LLM:
             else:
                 messages = self.format_messages(messages, supports_images)
 
+            logger.info(f"Input Messages: {messages}")
             # Calculate input token count
             input_tokens = self.count_message_tokens(messages)
 
@@ -452,6 +453,7 @@ class LLM:
 
             # estimate completion tokens for streaming response
             completion_tokens = self.count_tokens(completion_text)
+            logger.info(f"Completion text: {completion_text}")
             logger.info(
                 f"Estimated completion tokens for streaming response: {completion_tokens}"
             )
@@ -537,9 +539,7 @@ class LLM:
             multimodal_content = (
                 [{"type": "text", "text": content}]
                 if isinstance(content, str)
-                else content
-                if isinstance(content, list)
-                else []
+                else content if isinstance(content, list) else []
             )
 
             # Add images to content
@@ -687,6 +687,8 @@ class LLM:
             else:
                 messages = self.format_messages(messages, supports_images)
 
+            # logger.info(f"Input Messages: {messages}")
+
             # Calculate input token count
             input_tokens = self.count_message_tokens(messages)
 
@@ -744,6 +746,7 @@ class LLM:
                 response.usage.prompt_tokens, response.usage.completion_tokens
             )
 
+            # logger.info(f"Output Messages: {response.choices[0].message}")
             return response.choices[0].message
 
         except TokenLimitExceeded:

@@ -99,7 +99,30 @@ temperature = 0.0                          # Controls randomness for vision mode
 [mcp]
 server_reference = "app.mcp.server" # default server module reference
 
-# Optional Runflow configuration
-# Your can add additional agents into run-flow workflow to solve different-type tasks.
-[runflow]
-use_data_analysis_agent = false     # The Data Analysi Agent to solve various data analysis tasks
+# Snowflake configuration
+[snowflake]
+# Default configuration (optional)
+user = "your_username"
+password = "your_password"
+account = "your_account"
+warehouse = "your_warehouse"
+database = "your_database"
+schema = "your_schema"
+
+# Organization authority configuration
+[snowflake.org]
+user = "org_username"
+password = "org_password"
+account = "org_account"
+warehouse = "org_warehouse"
+database = "org_database"
+schema = "org_schema"
+
+# Person authority configuration
+[snowflake.person]
+user = "person_username"
+password = "person_password"
+account = "person_account"
+warehouse = "person_warehouse"
+database = "person_database"
+schema = "person_schema"
